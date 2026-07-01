@@ -1,32 +1,30 @@
 # TopoMentor - Mesh Topology Mentor
-# Add-on học modeling: soi topology, chấm Health Score, chọn/vẽ geometry lỗi để sửa tay.
+# Add-on hoc modeling: soi topology, cham Health Score, overlay/HUD, popup, pie menu.
 #
-# Hỗ trợ 2 kiểu cài:
-#   - Extension (Blender 4.2+): dùng blender_manifest.toml (bl_info bên dưới bị bỏ qua, vô hại).
-#   - Legacy add-on (4.0/4.1): dùng bl_info này.
+# Ho tro 2 kieu cai:
+#   - Extension (Blender 4.2+): dung blender_manifest.toml (bl_info duoi bi bo qua, vo hai).
+#   - Legacy add-on (4.0/4.1): dung bl_info nay.
 
 bl_info = {
     "name": "TopoMentor",
     "author": "byedash",
-    "version": (2, 0, 0),
+    "version": (3, 0, 0),
     "blender": (4, 0, 0),
-    "location": "View3D > Sidebar (N) > TopoMentor",
-    "description": "Phân tích topology, chấm Health Score, overlay poles/ngon, symmetry check, sửa tay.",
+    "location": "View3D > Sidebar (N) > TopoMentor | Pie: Alt+X",
+    "description": "Phan tich topology, Health Score, overlay/HUD, popup setup/cleanup/symmetrize, pie menu.",
     "category": "Mesh",
 }
 
 import importlib
-from . import properties, topo_utils, overlay, operators, panels
+from . import properties, topo_utils, overlay, operators, menus, panels, keymaps
 
-# Reload sạch khi phát triển (F3 > Reload Scripts).
-for _m in (properties, topo_utils, overlay, operators, panels):
+for _m in (properties, topo_utils, overlay, operators, menus, panels, keymaps):
     importlib.reload(_m)
 
-# Thứ tự register:
-#   properties (PropertyGroup phải có trước PointerProperty)
-#   -> overlay (chuẩn bị draw handler, chưa bật)
-#   -> operators -> panels.
-_ordered = (properties, overlay, operators, panels)
+# Thu tu register:
+#   properties (PropertyGroup truoc PointerProperty)
+#   -> overlay -> operators -> menus -> panels -> keymaps (can operators+menu da co).
+_ordered = (properties, overlay, operators, menus, panels, keymaps)
 
 
 def register():
@@ -35,7 +33,7 @@ def register():
 
 
 def unregister():
-    # Ngược thứ tự; overlay.unregister() sẽ gỡ draw handler để tránh leak.
+    # Nguoc thu tu; overlay/keymaps se go handler + keymap de tranh leak.
     for m in reversed(_ordered):
         m.unregister()
 

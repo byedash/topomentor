@@ -1,10 +1,10 @@
 schema_version = "1.0.0"
 
-# --- Định danh extension (Blender 4.2+) ---
+# --- Dinh danh extension (Blender 4.2+) ---
 id = "topomentor"
-version = "2.0.0"
+version = "3.0.0"
 name = "TopoMentor"
-tagline = "Analyze topology, score mesh health, learn by fixing"
+tagline = "Topology health, overlay/HUD, popups, pie menu for modeling"
 maintainer = "byedash <byedash@users.noreply.github.com>"
 type = "add-on"
 
@@ -13,11 +13,9 @@ tags = ["Mesh", "Modeling"]
 
 blender_version_min = "4.2.0"
 
-# SPDX license — GPL bắt buộc cho add-on dùng bpy.
+# SPDX license (GPL bat buoc cho add-on dung bpy).
 license = ["SPDX:GPL-3.0-or-later"]
 
-# Khai báo quyền: chỉ ghi file khi user bấm Export Report (chọn đường dẫn qua file browser).
+# Khai bao quyen: chi ghi file khi user bam Export Report.
 [permissions]
-files = "Xuất báo cáo topology ra file .txt do người dùng chọn"
-
-# Add-on này chỉ dùng API nhúng của Blender, không cần wheel/thư viện ngoài.
+files = "Export topology report to a .txt file chosen by the user"
