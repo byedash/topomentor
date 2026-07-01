@@ -8,10 +8,10 @@
 bl_info = {
     "name": "TopoMentor",
     "author": "byedash",
-    "version": (3, 0, 0),
+    "version": (4, 0, 0),
     "blender": (4, 0, 0),
     "location": "View3D > Sidebar (N) > TopoMentor | Pie: Alt+X",
-    "description": "Phan tich topology, Health Score, overlay/HUD, popup setup/cleanup/symmetrize, pie menu.",
+    "description": "Topology health, deep analysis, ready-check, retopo, overlay/HUD, popups, pie menu.",
     "category": "Mesh",
 }
 
@@ -33,7 +33,6 @@ def register():
 
 
 def unregister():
-    # Nguoc thu tu; overlay/keymaps se go handler + keymap de tranh leak.
     for m in reversed(_ordered):
         m.unregister()
 

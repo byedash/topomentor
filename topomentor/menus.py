@@ -12,15 +12,15 @@ class TOPOMENTOR_MT_pie(Menu):
         pie = self.layout.menu_pie()
         # 8 huong pie: West, East, South, North, NW, NE, SW, SE
         pie.operator("topomentor.analyze", text="Analyze", icon='ZOOM_ALL')
-        pie.operator("topomentor.cleanup", text="Cleanup", icon='BRUSH_DATA')
+        pie.operator("topomentor.ready_check", text="Ready Check", icon='CHECKBOX_HLT')
         pie.operator("topomentor.quick_setup", text="Setup", icon='MODIFIER')
-        pie.operator("topomentor.symmetrize", text="Symmetrize", icon='MOD_MIRROR')
+        pie.operator("topomentor.cleanup", text="Cleanup", icon='BRUSH_DATA')
         op = pie.operator("topomentor.select", text="Sel N-gons", icon='MESH_DATA')
         op.select_type = 'NGONS'
         op2 = pie.operator("topomentor.select", text="Sel Poles", icon='VERTEXSEL')
         op2.select_type = 'POLES'
         pie.operator("topomentor.report_popup", text="Report", icon='TEXT')
-        pie.operator("topomentor.refresh_overlay", text="Refresh Overlay", icon='FILE_REFRESH')
+        pie.operator("topomentor.symmetrize", text="Symmetrize", icon='MOD_MIRROR')
 
 
 _classes = (TOPOMENTOR_MT_pie,)

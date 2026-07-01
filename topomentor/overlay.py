@@ -1,68 +1,91 @@
-# GPU overlay (cham poles/ngon) + HUD chu (blf).
-# Toi uu: GPUBatch dung san trong rebuild() va cache; draw callback chi bind + draw.
+# GPU overlay: cham poles/ngon + duong non-manifold + vert lech doi xung + HUD chu.
+# Toi uu: batch dung san trong rebuild()/rebuild_* va cache; draw callback chi bind + draw.
 
 import bpy
 import blf
 import gpu
 from gpu_extras.batch import batch_for_shader
 
-_handle = None          # handler cham (POST_VIEW, world space)
-_hud_handle = None      # handler HUD chu (POST_PIXEL, pixel space)
+_handle = None          # handler ve 3D (POST_VIEW)
+_hud_handle = None      # handler HUD (POST_PIXEL)
 _shader = None
 _batches = {"e": None, "n": None, "ngon": None}
+_nm_batch = None        # non-manifold (LINES)
+_asym_batch = None      # asymmetric verts (POINTS)
 
 
 def _get_shader():
-    # UNIFORM_COLOR: builtin hop le o Blender 4.x/5.x.
     global _shader
     if _shader is None:
         _shader = gpu.shader.from_builtin('UNIFORM_COLOR')
     return _shader
 
 
-# --------------------------------------------------------------------------- #
-#  Overlay cham (POST_VIEW)
-# --------------------------------------------------------------------------- #
-def rebuild(obj, ignore_boundary=True):
-    from . import topo_utils
-    e_co, n_co, ngon_co = topo_utils.gather_markers(obj, ignore_boundary)
-    _set_batches(e_co, n_co, ngon_co)
+def _set_batches(e_co, n_co, ngon_co):
+    global _batches
+    sh = _get_shader()
+    _batches = {
+        "e": batch_for_shader(sh, 'POINTS', {"pos": e_co}) if e_co else None,
+        "n": batch_for_shader(sh, 'POINTS', {"pos": n_co}) if n_co else None,
+        "ngon": batch_for_shader(sh, 'POINTS', {"pos": ngon_co}) if ngon_co else None,
+    }
 
 
 def set_from_coords(e_co, n_co, ngon_co):
     _set_batches(e_co, n_co, ngon_co)
 
 
-def _set_batches(e_co, n_co, ngon_co):
-    global _batches
-    shader = _get_shader()
-    _batches = {
-        "e": batch_for_shader(shader, 'POINTS', {"pos": e_co}) if e_co else None,
-        "n": batch_for_shader(shader, 'POINTS', {"pos": n_co}) if n_co else None,
-        "ngon": batch_for_shader(shader, 'POINTS', {"pos": ngon_co}) if ngon_co else None,
-    }
+def rebuild(obj, ignore_boundary=True):
+    from . import topo_utils
+    e_co, n_co, ngon_co = topo_utils.gather_markers(obj, ignore_boundary)
+    _set_batches(e_co, n_co, ngon_co)
+    rebuild_nm(obj)
+
+
+def rebuild_nm(obj):
+    global _nm_batch
+    from . import topo_utils
+    coords = topo_utils.gather_nonmanifold_lines(obj)
+    _nm_batch = batch_for_shader(_get_shader(), 'LINES', {"pos": coords}) if coords else None
+
+
+def rebuild_asym(obj, axis=0):
+    global _asym_batch
+    from . import topo_utils
+    coords = topo_utils.gather_asymmetry(obj, axis)
+    _asym_batch = batch_for_shader(_get_shader(), 'POINTS', {"pos": coords}) if coords else None
 
 
 def _draw_callback():
     props = getattr(bpy.context.scene, "topomentor", None)
-    if props is None or not props.overlay_enabled:
+    if props is None:
         return
-    shader = _get_shader()
+    sh = _get_shader()
     gpu.state.blend_set('ALPHA')
     gpu.state.depth_test_set('LESS_EQUAL')
     size = props.overlay_point_size
 
-    def draw(batch, color, s):
+    def pts(batch, color, s):
         if batch is None:
             return
         gpu.state.point_size_set(s)
-        shader.bind()
-        shader.uniform_float("color", tuple(color))
-        batch.draw(shader)
+        sh.bind()
+        sh.uniform_float("color", tuple(color))
+        batch.draw(sh)
 
-    draw(_batches["n"], props.color_n_pole, size)
-    draw(_batches["e"], props.color_e_pole, size)
-    draw(_batches["ngon"], props.color_ngon, size * 0.9)
+    if props.overlay_enabled:
+        pts(_batches["n"], props.color_n_pole, size)
+        pts(_batches["e"], props.color_e_pole, size)
+        pts(_batches["ngon"], props.color_ngon, size * 0.9)
+
+    if props.overlay_nonmanifold and _nm_batch is not None:
+        gpu.state.line_width_set(props.line_width)
+        sh.bind()
+        sh.uniform_float("color", tuple(props.color_nonmanifold))
+        _nm_batch.draw(sh)
+
+    if props.overlay_asym and _asym_batch is not None:
+        pts(_asym_batch, props.color_asym, size * 1.15)
 
     gpu.state.depth_test_set('NONE')
     gpu.state.blend_set('NONE')
@@ -76,16 +99,26 @@ def enable():
 
 
 def disable():
-    global _handle, _batches
+    global _handle, _batches, _nm_batch, _asym_batch
     if _handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_handle, 'WINDOW')
         _handle = None
     _batches = {"e": None, "n": None, "ngon": None}
+    _nm_batch = None
+    _asym_batch = None
 
 
-# --------------------------------------------------------------------------- #
-#  HUD chu (POST_PIXEL) - hien Score + counts o goc tren-trai
-# --------------------------------------------------------------------------- #
+def sync_visual():
+    props = getattr(bpy.context.scene, "topomentor", None)
+    if props is None:
+        return
+    need = props.overlay_enabled or props.overlay_nonmanifold or props.overlay_asym
+    if need:
+        enable()
+    else:
+        disable()
+
+
 def _draw_hud():
     props = getattr(bpy.context.scene, "topomentor", None)
     if props is None or not props.hud_enabled or not props.has_result:
@@ -93,7 +126,6 @@ def _draw_hud():
     region = bpy.context.region
     if region is None:
         return
-
     font_id = 0
     x = 20
     y = region.height - 40
@@ -102,7 +134,7 @@ def _draw_hud():
         "Quads %d   Tris %d   N-gons %d" % (props.quads, props.tris, props.ngons),
         "Poles E%d N%d   Non-manifold %d" % (props.pole_e, props.pole_n, props.non_manifold),
     ]
-    blf.size(font_id, 15)   # Blender 4.x/5.x: blf.size(fontid, size)
+    blf.size(font_id, 15)
     for i, ln in enumerate(lines):
         if i == 0:
             if props.score >= 75:
