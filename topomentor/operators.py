@@ -1,4 +1,4 @@
-# Operators: Analyze, Select, Symmetry, Tris->Quads, Export, Refresh, + popup tools.
+# Operators: Analyze, Select, Symmetry, Tris->Quads, Export, Refresh + popup/deep/retopo tools.
 
 import bmesh
 import bpy
@@ -15,6 +15,17 @@ def _redraw_view3d(context):
     for area in context.screen.areas:
         if area.type == 'VIEW_3D':
             area.tag_redraw()
+
+
+def _set_retopo_snap(context):
+    # Bat snapping kieu retopo: snap len Face + Project. Guard vi ten prop co the doi.
+    ts = context.scene.tool_settings
+    for attr, val in (("use_snap", True), ("snap_elements", {'FACE'}),
+                      ("use_snap_project", True), ("use_snap_align_rotation", False)):
+        try:
+            setattr(ts, attr, val)
+        except Exception:
+            pass
 
 
 class TOPOMENTOR_OT_analyze(Operator):
@@ -45,6 +56,12 @@ class TOPOMENTOR_OT_analyze(Operator):
             setattr(props, key, data[key])
         props.rank = topo_utils.rank_label(data["score"])
         props.has_result = True
+
+        # Cap nhat cac lop visual dang bat.
+        if props.overlay_nonmanifold:
+            overlay.rebuild_nm(obj)
+        if props.overlay_asym:
+            overlay.rebuild_asym(obj, int(props.symmetry_axis))
 
         self.report({'INFO'},
                     f"Score {data['score']}/100 ({props.rank}) - "
@@ -181,7 +198,7 @@ class TOPOMENTOR_OT_tris_to_quads(Operator):
 class TOPOMENTOR_OT_refresh_overlay(Operator):
     bl_idname = "topomentor.refresh_overlay"
     bl_label = "Refresh Overlay"
-    bl_description = "Tinh lai vi tri poles/ngon cho overlay sau khi sua mesh"
+    bl_description = "Tinh lai vi tri poles/ngon/visual sau khi sua mesh"
     bl_options = {'REGISTER'}
 
     @classmethod
@@ -193,6 +210,8 @@ class TOPOMENTOR_OT_refresh_overlay(Operator):
         obj = context.active_object
         props = context.scene.topomentor
         overlay.rebuild(obj, props.ignore_boundary)
+        if props.overlay_asym:
+            overlay.rebuild_asym(obj, int(props.symmetry_axis))
         _redraw_view3d(context)
         return {'FINISHED'}
 
@@ -229,6 +248,13 @@ class TOPOMENTOR_OT_export_report(Operator, ExportHelper):
             f"Non-manifold edges: {p.non_manifold}",
             f"Boundary edges    : {p.boundary}",
         ]
+        if p.has_extra:
+            lines += [
+                "",
+                f"Non-planar quads: {p.non_planar}",
+                f"Thin triangles  : {p.thin_tris}",
+                f"N-gons 5/6/7+   : {p.ngon5}/{p.ngon6}/{p.ngon_big}",
+            ]
         if p.sym_checked:
             axis = {'0': 'X', '1': 'Y', '2': 'Z'}[p.symmetry_axis]
             lines += ["", f"Symmetry ({axis}): {p.sym_unmatched}/{p.sym_total} asymmetric verts"]
@@ -439,6 +465,144 @@ class TOPOMENTOR_OT_report_popup(Operator):
         return {'FINISHED'}
 
 
+class TOPOMENTOR_OT_deep_analyze(Operator):
+    """Phan tich sau: non-planar quads, thin tris, ngon breakdown, area stats."""
+    bl_idname = "topomentor.deep_analyze"
+    bl_label = "Deep Analyze"
+    bl_description = "Phan tich sau (non-planar quads, thin tris, ngon breakdown, area)"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH'
+
+    def execute(self, context):
+        obj = context.active_object
+        props = context.scene.topomentor
+        ex = topo_utils.analyze_extra(obj)
+        for k in ("non_planar", "thin_tris", "ngon5", "ngon6", "ngon_big",
+                  "area_min", "area_max", "area_avg"):
+            setattr(props, k, ex[k])
+        props.has_extra = True
+        self.report({'INFO'},
+                    "Non-planar %d  Thin tris %d  Ngon 5/6/+: %d/%d/%d"
+                    % (ex["non_planar"], ex["thin_tris"], ex["ngon5"], ex["ngon6"], ex["ngon_big"]))
+        return {'FINISHED'}
+
+
+class TOPOMENTOR_OT_ready_check(Operator):
+    """Popup checklist: mesh da san sang de model/subdiv/rig chua."""
+    bl_idname = "topomentor.ready_check"
+    bl_label = "Modeling-Ready Check"
+    bl_description = "Popup checklist: transform applied, quads, manifold, loose"
+    bl_options = {'REGISTER'}
+
+    r_transform = False
+    r_ngon = False
+    r_quads = False
+    r_manifold = False
+    r_loose = False
+    _ngons = 0
+    _tris = 0
+    _nm = 0
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH'
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        props = context.scene.topomentor
+        data = topo_utils.analyze_mesh(obj, ignore_boundary=props.ignore_boundary)
+        self._ngons = data["ngons"]
+        self._tris = data["tris"]
+        self._nm = data["non_manifold"]
+        self.r_transform = topo_utils.check_transform_applied(obj)
+        self.r_ngon = (data["ngons"] == 0)
+        self.r_quads = (data["ngons"] == 0 and data["tris"] == 0)
+        self.r_manifold = (data["non_manifold"] == 0)
+        self.r_loose = (topo_utils.count_loose(obj) == 0)
+        return context.window_manager.invoke_popup(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.label(text="Modeling-Ready Checklist", icon='CHECKBOX_HLT')
+
+        def line(ok, label):
+            row = layout.row()
+            row.label(text=label, icon='CHECKMARK' if ok else 'CANCEL')
+
+        line(self.r_transform, "Transform applied (Scale/Rotation)")
+        line(self.r_ngon, "No N-gons (%d)" % self._ngons)
+        line(self.r_quads, "All quads (tris: %d)" % self._tris)
+        line(self.r_manifold, "Manifold (non-manifold: %d)" % self._nm)
+        line(self.r_loose, "No loose geometry")
+
+        if not self.r_transform:
+            layout.label(text="Tip: Ctrl+A > Apply Scale", icon='ERROR')
+
+    def execute(self, context):
+        return {'FINISHED'}
+
+
+class TOPOMENTOR_OT_retopo_setup(Operator):
+    """Popup: them Shrinkwrap boc len hi-poly + bat retopo snapping."""
+    bl_idname = "topomentor.retopo_setup"
+    bl_label = "Retopo Setup"
+    bl_description = "Popup: them Shrinkwrap modifier boc len hi-poly + bat snapping"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    target: StringProperty(name="Hi-poly Target")
+    enable_snap: BoolProperty(name="Enable Retopo Snapping", default=True)
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH'
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_props_dialog(self, width=300)
+
+    def draw(self, context):
+        layout = self.layout
+        layout.prop_search(self, "target", bpy.data, "objects", text="Hi-poly")
+        layout.prop(self, "enable_snap")
+
+    def execute(self, context):
+        obj = context.active_object
+        done = []
+        tgt = bpy.data.objects.get(self.target) if self.target else None
+        if tgt is not None and tgt != obj:
+            m = obj.modifiers.new("Shrinkwrap", 'SHRINKWRAP')
+            m.target = tgt
+            m.wrap_method = 'NEAREST_SURFACEPOINT'
+            try:
+                m.wrap_mode = 'ON_SURFACE'
+            except Exception:
+                pass
+            done.append("shrinkwrap -> " + tgt.name)
+        if self.enable_snap:
+            _set_retopo_snap(context)
+            done.append("snapping")
+        self.report({'INFO'}, "Retopo: " + (", ".join(done) if done else "chon target hi-poly"))
+        return {'FINISHED'}
+
+
+class TOPOMENTOR_OT_retopo_snap(Operator):
+    """Bat nhanh snapping Face + Project cho retopo."""
+    bl_idname = "topomentor.retopo_snap"
+    bl_label = "Retopo Snapping On"
+    bl_description = "Bat snapping Face + Project (retopo)"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        _set_retopo_snap(context)
+        self.report({'INFO'}, "Retopo snapping: Face + Project ON")
+        return {'FINISHED'}
+
+
 _classes = (
     TOPOMENTOR_OT_analyze,
     TOPOMENTOR_OT_select,
@@ -450,6 +614,10 @@ _classes = (
     TOPOMENTOR_OT_cleanup,
     TOPOMENTOR_OT_symmetrize,
     TOPOMENTOR_OT_report_popup,
+    TOPOMENTOR_OT_deep_analyze,
+    TOPOMENTOR_OT_ready_check,
+    TOPOMENTOR_OT_retopo_setup,
+    TOPOMENTOR_OT_retopo_snap,
 )
 
 
