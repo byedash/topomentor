@@ -17,21 +17,22 @@ class TOPOMENTOR_PT_main(Panel):
 
         layout.prop(props, "ignore_boundary")
         layout.operator("topomentor.analyze", icon='ZOOM_ALL')
+        layout.operator("topomentor.report_popup", icon='TEXT')
 
         if not props.has_result:
             layout.label(text="Chua co du lieu. Bam Analyze.", icon='INFO')
-            return
+        else:
+            box = layout.box()
+            row = box.row()
+            row.label(text="Health Score: %d/100" % props.score)
+            row.label(text=props.rank, icon='SOLO_ON' if props.score >= 75 else 'ERROR')
+            col = box.column(align=True)
+            col.label(text="Faces %d  |  V %d  E %d" % (props.faces, props.verts, props.edges))
+            col.label(text="Quads %d   Tris %d   N-gons %d" % (props.quads, props.tris, props.ngons))
+            col.label(text="Poles  E:%d  N:%d" % (props.pole_e, props.pole_n))
+            col.label(text="Non-manifold %d   Boundary %d" % (props.non_manifold, props.boundary))
 
-        box = layout.box()
-        row = box.row()
-        row.label(text=f"Health Score: {props.score}/100")
-        row.label(text=props.rank, icon='SOLO_ON' if props.score >= 75 else 'ERROR')
-
-        col = box.column(align=True)
-        col.label(text=f"Faces {props.faces}  |  V {props.verts}  E {props.edges}")
-        col.label(text=f"Quads {props.quads}   Tris {props.tris}   N-gons {props.ngons}")
-        col.label(text=f"Poles  E:{props.pole_e}  N:{props.pole_n}")
-        col.label(text=f"Non-manifold {props.non_manifold}   Boundary {props.boundary}")
+        layout.label(text="Pie menu: Alt + X", icon='EVENT_X')
 
 
 class TOPOMENTOR_PT_select(Panel):
@@ -49,13 +50,29 @@ class TOPOMENTOR_PT_select(Panel):
         grid.operator("topomentor.select", text="Tris").select_type = 'TRIS'
         grid.operator("topomentor.select", text="Poles").select_type = 'POLES'
         grid.operator("topomentor.select", text="Non-manifold").select_type = 'NONMANIFOLD'
+        grid.operator("topomentor.select", text="Non-quads").select_type = 'NONQUADS'
 
         layout.separator()
         layout.operator("topomentor.tris_to_quads", icon='MOD_TRIANGULATE')
 
 
+class TOPOMENTOR_PT_modeling(Panel):
+    bl_label = "Modeling Tools"
+    bl_idname = "TOPOMENTOR_PT_modeling"
+    bl_parent_id = "TOPOMENTOR_PT_main"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "TopoMentor"
+
+    def draw(self, context):
+        layout = self.layout
+        layout.operator("topomentor.quick_setup", icon='MODIFIER')
+        layout.operator("topomentor.cleanup", icon='BRUSH_DATA')
+        layout.operator("topomentor.symmetrize", icon='MOD_MIRROR')
+
+
 class TOPOMENTOR_PT_overlay(Panel):
-    bl_label = "Overlay"
+    bl_label = "Overlay & HUD"
     bl_idname = "TOPOMENTOR_PT_overlay"
     bl_parent_id = "TOPOMENTOR_PT_main"
     bl_space_type = 'VIEW_3D'
@@ -67,6 +84,7 @@ class TOPOMENTOR_PT_overlay(Panel):
         layout = self.layout
         props = context.scene.topomentor
 
+        layout.prop(props, "hud_enabled", toggle=True, icon='INFO')
         layout.prop(props, "overlay_enabled", toggle=True, icon='HIDE_OFF')
         col = layout.column()
         col.enabled = props.overlay_enabled
@@ -96,15 +114,16 @@ class TOPOMENTOR_PT_tools(Panel):
         layout.operator("topomentor.check_symmetry", icon='MOD_MIRROR')
         if props.sym_checked:
             icon = 'CHECKMARK' if props.sym_unmatched == 0 else 'ERROR'
-            layout.label(text=f"Asymmetric: {props.sym_unmatched}/{props.sym_total}", icon=icon)
+            layout.label(text="Asymmetric: %d/%d" % (props.sym_unmatched, props.sym_total), icon=icon)
 
         layout.separator()
-        layout.operator("topomentor.export_report", icon='TEXT')
+        layout.operator("topomentor.export_report", icon='FILE_TEXT')
 
 
 _classes = (
     TOPOMENTOR_PT_main,
     TOPOMENTOR_PT_select,
+    TOPOMENTOR_PT_modeling,
     TOPOMENTOR_PT_overlay,
     TOPOMENTOR_PT_tools,
 )

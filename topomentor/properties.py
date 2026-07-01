@@ -1,4 +1,4 @@
-# PropertyGroup: setting + ket qua analyze + cau hinh overlay, gan vao Scene.
+# PropertyGroup: setting + ket qua analyze + cau hinh overlay/HUD, gan vao Scene.
 
 import bpy
 from bpy.props import (
@@ -11,7 +11,7 @@ from . import overlay
 
 
 def _overlay_toggled(self, context):
-    # Callback khi bat/tat overlay: add/remove draw handler ngay.
+    # Callback khi bat/tat overlay cham: add/remove draw handler ngay.
     if self.overlay_enabled:
         obj = context.active_object
         if obj and obj.type == 'MESH':
@@ -19,6 +19,19 @@ def _overlay_toggled(self, context):
         overlay.enable()
     else:
         overlay.disable()
+    _redraw(context)
+
+
+def _hud_toggled(self, context):
+    # Callback khi bat/tat HUD chu.
+    if self.hud_enabled:
+        overlay.enable_hud()
+    else:
+        overlay.disable_hud()
+    _redraw(context)
+
+
+def _redraw(context):
     for area in context.screen.areas:
         if area.type == 'VIEW_3D':
             area.tag_redraw()
@@ -37,7 +50,7 @@ class TopoMentorProps(PropertyGroup):
         default='0',
     )
 
-    # --- overlay ---
+    # --- overlay cham ---
     overlay_enabled: BoolProperty(
         name="Show Overlay",
         description="Ve cham mau len poles va tam ngon tren viewport",
@@ -56,6 +69,14 @@ class TopoMentorProps(PropertyGroup):
     color_ngon: FloatVectorProperty(
         name="N-gon", subtype='COLOR', size=4,
         default=(1.0, 0.8, 0.1, 1.0), min=0.0, max=1.0,
+    )
+
+    # --- HUD chu tren viewport ---
+    hud_enabled: BoolProperty(
+        name="Show HUD",
+        description="Hien Score + so lieu dang chu o goc viewport",
+        default=False,
+        update=_hud_toggled,
     )
 
     # --- ket qua analyze (read-only tren UI) ---
@@ -89,8 +110,9 @@ def register():
 
 
 def unregister():
-    # Tat overlay truoc de khong con handler tham chieu toi props.
+    # Tat overlay + HUD truoc de khong con handler tham chieu toi props.
     overlay.disable()
+    overlay.disable_hud()
     del bpy.types.Scene.topomentor
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
