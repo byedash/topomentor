@@ -1,13 +1,28 @@
 # Logic thuan: numpy-vectorized cho Object Mode (nhanh), bmesh cho Edit Mode.
 # KHONG import bpy.ops, KHONG ve UI.
 
+import math
+
 import bmesh
 import numpy as np
-from mathutils import kdtree
+from mathutils import kdtree, geometry
+
+
+def _get_bmesh(obj):
+    """Lay BMesh, ho tro ca Object/Edit Mode.
+
+    Tra (bm, is_edit). Neu is_edit=False, caller PHAI goi bm.free().
+    """
+    me = obj.data
+    if obj.mode == 'EDIT':
+        return bmesh.from_edit_mesh(me), True
+    bm = bmesh.new()
+    bm.from_mesh(me)
+    return bm, False
 
 
 # =========================================================================== #
-#  CORE numpy (Object Mode) - vectorized, khong Python per-element loop
+#  CORE numpy (Object Mode)
 # =========================================================================== #
 def _core_numpy(me, ignore_boundary):
     n_poly = len(me.polygons)
@@ -15,14 +30,12 @@ def _core_numpy(me, ignore_boundary):
     n_vert = len(me.vertices)
     n_loop = len(me.loops)
 
-    # --- Dem loai mat: 1 lan foreach_get 'loop_total' ---
     loop_total = np.empty(n_poly, dtype=np.int32)
     me.polygons.foreach_get("loop_total", loop_total)
     tris = int(np.count_nonzero(loop_total == 3))
     quads = int(np.count_nonzero(loop_total == 4))
     ngons = int(np.count_nonzero(loop_total > 4))
 
-    # --- So mat dung moi canh: bincount edge_index tren loops ---
     if n_loop and n_edge:
         loop_edge = np.empty(n_loop, dtype=np.int32)
         me.loops.foreach_get("edge_index", loop_edge)
@@ -34,7 +47,6 @@ def _core_numpy(me, ignore_boundary):
     boundary = int(boundary_mask.sum())
     non_manifold = int(nonmanifold_mask.sum())
 
-    # --- Valence moi vert: bincount 2 dau moi canh ---
     if n_edge:
         edge_verts = np.empty(n_edge * 2, dtype=np.int32)
         me.edges.foreach_get("vertices", edge_verts)
@@ -43,14 +55,12 @@ def _core_numpy(me, ignore_boundary):
         edge_verts = np.empty(0, dtype=np.int32)
         valence = np.zeros(n_vert, dtype=np.int64)
 
-    # --- Vert nao thuoc mat (loai wire/loose khoi thong ke poles) ---
     has_face = np.zeros(n_vert, dtype=bool)
     if n_loop:
         loop_vert = np.empty(n_loop, dtype=np.int32)
         me.loops.foreach_get("vertex_index", loop_vert)
         has_face[loop_vert] = True
 
-    # --- Vert bien: 2 dau cua canh boundary ---
     vert_boundary = np.zeros(n_vert, dtype=bool)
     if n_edge:
         ev = edge_verts.reshape(-1, 2)
@@ -77,7 +87,6 @@ def _core_numpy(me, ignore_boundary):
 
 
 def _markers_from_core(obj, core):
-    # Tu core numpy -> toa do world (list tuple) cho overlay.
     me = obj.data
     n_vert = len(me.vertices)
 
@@ -85,7 +94,7 @@ def _markers_from_core(obj, core):
     me.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3)
 
-    M = np.array(obj.matrix_world, dtype=np.float64)   # 4x4 row-major
+    M = np.array(obj.matrix_world, dtype=np.float64)
 
     def to_world(mask):
         pts = co[mask]
@@ -98,7 +107,6 @@ def _markers_from_core(obj, core):
 
     e_co = to_world(core["pole_e_mask"])
     n_co = to_world(core["pole_n_mask"])
-
     ngon_co = [tuple(obj.matrix_world @ me.polygons[int(i)].center)
                for i in core["ngon_poly_idx"]]
     return e_co, n_co, ngon_co
@@ -156,7 +164,7 @@ def _markers_bmesh(obj, ignore_boundary):
 
 
 # =========================================================================== #
-#  API cong khai (tu chon duong nhanh theo mode)
+#  API cong khai
 # =========================================================================== #
 def analyze_mesh(obj, ignore_boundary=True):
     if obj.mode == 'EDIT':
@@ -224,8 +232,7 @@ def check_symmetry(obj, axis=0, threshold=0.0001):
         me.vertices.foreach_get("co", buf)
         coords = buf.reshape(-1, 3)
 
-    size = len(coords)
-    kd = kdtree.KDTree(size)
+    kd = kdtree.KDTree(len(coords))
     for i, c in enumerate(coords):
         kd.insert((float(c[0]), float(c[1]), float(c[2])), i)
     kd.balance()
@@ -241,3 +248,112 @@ def check_symmetry(obj, axis=0, threshold=0.0001):
         if dist is None or dist > threshold:
             unmatched += 1
     return unmatched, checked
+
+
+# =========================================================================== #
+#  Deep analysis - non-planar quads, thin tris, ngon breakdown, area
+# =========================================================================== #
+def analyze_extra(obj, non_planar_deg=10.0, thin_ratio=0.1):
+    bm, is_edit = _get_bmesh(obj)
+    bm.faces.ensure_lookup_table()
+
+    ngon5 = ngon6 = ngon_big = 0
+    non_planar = thin_tris = 0
+    areas = []
+    for f in bm.faces:
+        n = len(f.verts)
+        area = f.calc_area()
+        areas.append(area)
+        if n == 5:
+            ngon5 += 1
+        elif n == 6:
+            ngon6 += 1
+        elif n > 6:
+            ngon_big += 1
+
+        if n == 4:
+            v = f.verts
+            n1 = geometry.normal(v[0].co, v[1].co, v[2].co)
+            n2 = geometry.normal(v[0].co, v[2].co, v[3].co)
+            if n1.length > 0.0 and n2.length > 0.0:
+                if math.degrees(n1.angle(n2)) > non_planar_deg:
+                    non_planar += 1
+        elif n == 3:
+            longest = max(e.calc_length() for e in f.edges)
+            if longest > 0.0 and area > 0.0:
+                height = 2.0 * area / longest
+                if (height / longest) < thin_ratio:
+                    thin_tris += 1
+
+    res = {
+        "ngon5": ngon5, "ngon6": ngon6, "ngon_big": ngon_big,
+        "non_planar": non_planar, "thin_tris": thin_tris,
+        "area_min": min(areas) if areas else 0.0,
+        "area_max": max(areas) if areas else 0.0,
+        "area_avg": (sum(areas) / len(areas)) if areas else 0.0,
+    }
+    if not is_edit:
+        bm.free()
+    return res
+
+
+# =========================================================================== #
+#  Gather cho visual overlay
+# =========================================================================== #
+def gather_nonmanifold_lines(obj):
+    """Non-manifold = canh dung boi >2 mat, hoac canh loose (0 mat)."""
+    bm, is_edit = _get_bmesh(obj)
+    bm.edges.ensure_lookup_table()
+    mw = obj.matrix_world
+    coords = []
+    for e in bm.edges:
+        nf = len(e.link_faces)
+        if nf > 2 or nf == 0:
+            coords.append(tuple(mw @ e.verts[0].co))
+            coords.append(tuple(mw @ e.verts[1].co))
+    if not is_edit:
+        bm.free()
+    return coords
+
+
+def gather_asymmetry(obj, axis=0, threshold=0.0001):
+    bm, is_edit = _get_bmesh(obj)
+    bm.verts.ensure_lookup_table()
+    mw = obj.matrix_world
+
+    kd = kdtree.KDTree(len(bm.verts))
+    for i, v in enumerate(bm.verts):
+        kd.insert(v.co, i)
+    kd.balance()
+
+    coords = []
+    for v in bm.verts:
+        if abs(v.co[axis]) <= threshold:
+            continue
+        m = v.co.copy()
+        m[axis] = -m[axis]
+        _, _, dist = kd.find(m)
+        if dist is None or dist > threshold:
+            coords.append(tuple(mw @ v.co))
+    if not is_edit:
+        bm.free()
+    return coords
+
+
+def check_transform_applied(obj, tol=0.001):
+    s = obj.scale
+    r = obj.rotation_euler
+    scale_ok = all(abs(c - 1.0) <= tol for c in s)
+    rot_ok = all(abs(c) <= tol for c in r)
+    return scale_ok and rot_ok
+
+
+def count_loose(obj):
+    bm, is_edit = _get_bmesh(obj)
+    loose = 0
+    for v in bm.verts:
+        if len(v.link_faces) == 0:
+            loose += 1
+    if not is_edit:
+        bm.free()
+    return loose
